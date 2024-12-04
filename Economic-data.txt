@@ -1,0 +1,26 @@
+Description of economic predictors used
+
+#GDP - Quartly
+    #GDP - GDP
+    #A939RX0Q048SBEA - Real gross domestic product per capita
+
+#CPI
+    ##CPIAUCSL- Consumer Price Index for All Urban Consumers: All Items in U.S. City Average - monthly
+
+#Unemployment - monthly
+    ##UNRATE - Unemployment Rate, Percent, Monthly, Seasonally Adjusted
+
+#Inflation - Daily
+    ##T10YIE - 10-Year Break-even Inflation Rate
+    ##T5YIE - 5-Year Break-even Inflation Rate.
+    ##DFII5 - 5-Year Treasury Inflation-Indexed Security, Constant Maturity.
+    ##DFII10 - 10-Year Treasury Inflation-Indexed Security, Constant Maturity.
+
+##interest - Daily
+    #DFF - Federal Funds Effective Rate
+
+#Industrial Production
+    #INDPRO  - Industrial Production: Total Index, Index 2017=100, Monthly, Seasonally Adjusted
+
+##Disposable income - Monthly
+    #A229RX0 - Real Disposable Personal Income: Per Capita, Chained 2017 Dollars, Monthly, Seasonally Adjusted Annual Rate
