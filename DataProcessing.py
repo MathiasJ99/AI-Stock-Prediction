@@ -1,4 +1,6 @@
 import time
+import unittest.mock
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -11,17 +13,24 @@ import openpyxl
 
 
 def GetHistorical():
-    Historicaldf = yf.download('^DJI', start='2013-01-01', end='2023-12-31')
-    Historicaldf.reset_index(inplace=True)
-    Historicaldf["Date"] = Historicaldf["Date"].dt.strftime('%Y-%m-%d')
+    start = "2020-01-01"
+    end = "2020-06-30"
 
+    HistoricalDF = yf.download('^DJI', start=start, end=end)
     # Creates new column in DF called medium
-    Historicaldf['Medium'] = (Historicaldf['High'] + Historicaldf['Low']) / 2
+    HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
 
-    #df.to_csv("HistoricalDataCSV.csv")
-    #df.to_excel('HistoricalData.xlsx') # uses $USD
+    #formatting
+    ##converting multi dimensonal header to 1d header
+    one_dim_headers = [col[0] for col in HistoricalDF.columns.values]
+    HistoricalDF.columns = one_dim_headers# Update the DataFrame headers
+    HistoricalDF = HistoricalDF.reset_index()
+    HistoricalDF.rename(columns={"Date": "Dates"}, inplace=True)
 
-    return Historicaldf
+
+    HistoricalDF.to_excel('HistoricalData.xlsx') # uses $USD
+    print(HistoricalDF.head())
+    return HistoricalDF
 
 
 def GetEconomical():
@@ -92,7 +101,16 @@ def APICall(Data):# returns array of dfs in form [date, feature]
 
     return All_data
 
+def Merge(HistoricalDF, EconomicalDF):
+    MergedDF = pd.merge(HistoricalDF, EconomicalDF,on="Dates", how="inner")
+
+    print(MergedDF.head())
+    MergedDF.to_excel('MergedDF.xlsx')  # uses $USD
+    return MergedDF
+
 
 load_dotenv() #load env vars
-GetEconomical()
-#GetHistorical()
+
+EconomicDF = GetEconomical()
+HistoricDF = GetHistorical()
+Merge(EconomicDF, HistoricDF)
