@@ -7,9 +7,9 @@ from fredapi import Fred
 from functools import reduce
 import openpyxl
 
-
+load_dotenv() #load env vars
 start = "2020-01-01"
-end = "2020-06-30"
+end = "2021-12-31"
 
 def GetHistorical():
     HistoricalDF = yf.download('^DJI', start=start, end=end)
@@ -104,8 +104,8 @@ def Merge(HistoricalDF, EconomicalDF):
     return MergedDF
 
 
-load_dotenv() #load env vars
 
-EconomicDF = GetEconomical()
-HistoricDF = GetHistorical()
-Merge(EconomicDF, HistoricDF)
+def GetData():
+    EconomicDF = GetEconomical()
+    HistoricDF = GetHistorical()
+    return Merge(EconomicDF, HistoricDF)
