@@ -1,9 +1,6 @@
 import time
-import unittest.mock
-
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from dotenv import load_dotenv
 import os
 from fredapi import Fred
@@ -11,11 +8,10 @@ from functools import reduce
 import openpyxl
 
 
+start = "2020-01-01"
+end = "2020-06-30"
 
 def GetHistorical():
-    start = "2020-01-01"
-    end = "2020-06-30"
-
     HistoricalDF = yf.download('^DJI', start=start, end=end)
     # Creates new column in DF called medium
     HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
@@ -27,8 +23,8 @@ def GetHistorical():
     HistoricalDF = HistoricalDF.reset_index()
     HistoricalDF.rename(columns={"Date": "Dates"}, inplace=True)
 
-
-    HistoricalDF.to_excel('HistoricalData.xlsx') # uses $USD
+    #testing
+    #HistoricalDF.to_excel('HistoricalData.xlsx') # uses $USD
     print(HistoricalDF.head())
     return HistoricalDF
 
@@ -76,7 +72,8 @@ def GetEconomical():
     EconomicalDF = EconomicalDF.drop(columns=["Dates_y"])
 
     print(EconomicalDF.head)
-    EconomicalDF.to_excel('AllEconomicalData.xlsx')
+    #testing
+    #EconomicalDF.to_excel('AllEconomicalData.xlsx')
     return EconomicalDF
 
 
@@ -86,8 +83,6 @@ def APICall(Data):# returns array of dfs in form [date, feature]
     ## 1000 records / request & maybe 100,000 observations / request
 
     fred = Fred(api_key=os.getenv("FRED_API_KEY"))
-    start = "2020-01-01"
-    end = "2020-6-30"
     All_data = []
 
     # iterate though econ obj and get df of dates and data and append to All_data
