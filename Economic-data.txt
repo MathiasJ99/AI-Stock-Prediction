@@ -2,6 +2,7 @@ Description of economic predictors used
 
 #GDP - Quartly
     #GDP - GDP
+
     #A939RX0Q048SBEA - Real gross domestic product per capita
 
 #CPI
@@ -23,4 +24,41 @@ Description of economic predictors used
     #INDPRO  - Industrial Production: Total Index, Index 2017=100, Monthly, Seasonally Adjusted
 
 ##Disposable income - Monthly
-    #A229RX0 - Real Disposable Personal Income: Per Capita, Chained 2017 Dollars, Monthly, Seasonally Adjusted Annual Rate
+    #A229RX0 - Real Disposable Personal Income: Per Capita, Chained 2017 Dollars, 	Monthly, Seasonally Adjusted Annual Rate
+
+
+
+
+    ~GDI - Gross domestic income - Q
+    ~GNP - Gross National Product - Q
+~PSAVE - Personal Savings - Q
+~NETEXP - Net exports of goods and services - Q
+~CP - Corporate Profits After Tax without IVA and CCAdj - Q
+~FGEXPND - Federal Government: Currect Expenditure - Q
+~GDPC1 - Real Gross Domestic Product  - Q
+~HDTGPDUSQ163N - Household Debt to GDP for United States - Q
+~JHDUSRGDPBR - Dates of U.S. recessions as inferred by GDP-based recession indicator - Q
+~A072RC1Q156SBEA - Personal saving as a percentage of disposable personal income - Q
+----
+~M2 - Money supply - M
+---
+PCEPI -M
+DTWEXBGS - D
+DCOILWTICO - D
+VIXCLS - D
+SP500 - D
+UMCSENT - M
+BOPGSTB - M
+
+
+
+GS10 - M
+USEPUINDXD - D
+ICSA- W
+UMCSENT - M
+PPIACO - M
+
+
+
+
+conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia
