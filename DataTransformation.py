@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 def FeatureSelection():
     """Main function to perform feature selection using RFE and RFECV."""
     #df = DataProcessing.GetData()
-    df = pd.read_excel("MergedAndCleanedDF.xlsx")
+    df = pd.read_excel("MergedDF.xlsx")
 
     # Drop the 'Dates' column (if not needed)
     if 'Dates' in df.columns:

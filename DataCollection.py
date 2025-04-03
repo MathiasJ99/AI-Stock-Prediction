@@ -43,6 +43,10 @@ def Clean(df):
     return df
 
 def GetData():
+    GetHistoric("Google_Stock_Train (2010-2022).csv")
+    GetEconomic()
+
+
     HistoricDF = pd.read_excel("HistoricalAndTechnicalData.xlsx") # GetHistoric("Google_Stock_Train (2010-2022).csv") or GetHistoric() if using yfinance
     EconomicDF = pd.read_excel("EconomicData.xlsx") #GetEconomic()
     SentimentalDF =  pd.read_excel("Sentimental_google_sorted_nltk_scores.xlsx") #GetSentimental()

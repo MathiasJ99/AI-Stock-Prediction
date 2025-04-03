@@ -1,213 +1,224 @@
-import os
+import math
+
+import sklearn.preprocessing
 import torch
 import torch.nn as nn
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
-import DataCollection
-
+import torch.utils.data
+import torch.optim as optim
+#import DataCollection
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, Subset, DataLoader
 from copy import deepcopy as dc
 
-#data
-#data = DataProcessing.GetData()
-data = pd.read_excel("MergedDF.xlsx")
 
-#Randomisation
-torch.manual_seed(99)
+class AllData(Dataset):
 
-# device configuration
-device = torch.device("Cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using {device} device")
+    def __init__(self, sequence_length=20):
+        #Data
+        # data = DataCollection.GetData()
+        #data = pd.read_excel("MergedDF.xlsx")
+        data = pd.read_excel("MergedDF - Copy.xlsx")
+        X, y , scaler_target = self.DataPreProcessing(data)
 
-#
-def prepare_dataframe_for_lstm(df, n_steps):
-    df = dc(df)
-    df.set_index('Dates', inplace=True)
-    for i in range(1, n_steps+1):
-        df[f'Close(t-{i})'] = df['Close'].shift(i)
+        #exclude_columns = ['Close', 'Date']
+        #feature_columns = [col for col in data.columns if col not in exclude_columns]
 
-    df.dropna(inplace=True)
-    return df
+        self.X = torch.tensor(X.values, dtype=torch.float32)
+        self.y = torch.tensor(y.values, dtype=torch.float32).unsqueeze(1)
 
-window_size = 7 # days
-processed_df = prepare_dataframe_for_lstm(data,window_size)
-X = processed_df.loc[:, processed_df.columns != 'Close'].to_numpy()
-y = processed_df["Close"].to_numpy()
+        self.sequence_length = sequence_length
+        self.scaler_target = scaler_target
 
-scaler = MinMaxScaler(feature_range=(-1, 1))
-
-y = y.reshape(-1,1)
-X, y = scaler.fit_transform(X), scaler.fit_transform(y).flatten()
-X = dc(np.flip(X, axis=1))
-#print(X.shape,y.shape )
-
-
-##Spliting data
-split_index = int(len(X) *0.9)
-
-X_train = X[:split_index]
-X_test = X[split_index:]
-y_train = y[:split_index]
-y_test = y[split_index:]
-print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
-
-#reshaping to use lstm with pytorch
-num_features = X.shape[1]
-
-X_train = X_train.reshape((-1, 1, num_features))
-X_test = X_test.reshape((-1, 1, num_features))
-
-y_train = y_train.reshape((-1, 1))
-y_test = y_test.reshape((-1, 1))
-print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
-
-#convert to pytorch tensors
-X_train = torch.tensor(X_train).float()
-y_train = torch.tensor(y_train).float()
-X_test = torch.tensor(X_test).float()
-y_test = torch.tensor(y_test).float()
-
-
-class TimeSeriesDataset(Dataset):
-    def __init__(self, X, y):
-        self.X = X
-        self.y = y
+    def __getitem__(self, index):
+        x = self.X[index:index + self.sequence_length]
+        y = self.y[index + self.sequence_length]  # predict the value right after the sequence
+        return x, y
 
     def __len__(self):
-        return len(self.X)
+        return len(self.X) - self.sequence_length
 
-    def __getitem__(self, i):
-        return self.X[i], self.y[i]
+    def DataPreProcessing(self, df):
+        df = df.copy()
+        df.drop(columns=["Date"], inplace=True, errors='ignore')  # drop Date if exists
 
-train_dataset = TimeSeriesDataset(X_train, y_train)
-test_dataset = TimeSeriesDataset(X_test, y_test)
+        target = df["Close"]
+        features = df.drop(columns=["Close"])
 
-batch_size = 16
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        X_scaled = pd.DataFrame(scaler_X.fit_transform(features), columns=features.columns)
+        y_scaled = pd.Series(scaler_y.fit_transform(target.values.reshape(-1, 1)).flatten())
 
-
-for _, batch in enumerate(train_loader):
-    x_batch, y_batch = batch[0].to(device), batch[1].to(device)
-    print(x_batch.shape, y_batch.shape)
-    break
-
+        return X_scaled, y_scaled, scaler_y
 
 
 class LSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_stacked_layers):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_stacked_layers = num_stacked_layers
-
-        self.lstm = nn.LSTM(input_size, hidden_size, num_stacked_layers,
-                            batch_first=True)
-
-        self.fc = nn.Linear(hidden_size, 1)
+    def __init__(self, input_size, hidden_size,  output_size):
+        super(LSTM,self).__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        batch_size = x.size(0)
-        h0 = torch.zeros(self.num_stacked_layers, batch_size, self.hidden_size).to(device)
-        c0 = torch.zeros(self.num_stacked_layers, batch_size, self.hidden_size).to(device)
-
-        out, _ = self.lstm(x, (h0, c0))
+        out, _ = self.lstm(x,)
         out = self.fc(out[:, -1, :])
         return out
 
 
 
-model = LSTM(input_size=num_features, hidden_size=4, num_stacked_layers=1)
-model.to(device)
+if __name__ == "__main__":
+    # Use GPU
+    device = torch.device("Cuda" if torch.cuda.is_available() else "cpu")
+    available = torch.cuda.is_available()
+    count = torch.cuda.device_count()
+    print(f"Using {device} device, available {available}, count {count}")
+
+    #Randomisation
+    torch.manual_seed(99)
+    batch_size = 32
+    window_size = 20
+
+    #Creating datasets
+    dataset = AllData(sequence_length=window_size)
+
+    train_end = int(len(dataset) * 0.7)
+    val_end = int(len(dataset) * 0.85)
 
 
-def train_one_epoch():
-    model.train(True)
-    print(f'Epoch: {epoch + 1}')
-    running_loss = 0.0
-
-    for batch_index, batch in enumerate(train_loader):
-        x_batch, y_batch = batch[0].to(device), batch[1].to(device)
-
-        output = model(x_batch)
-        loss = loss_function(output, y_batch)
-        running_loss += loss.item()
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if batch_index % 100 == 99:  # print every 100 batches
-            avg_loss_across_batches = running_loss / 100
-            print('Batch {0}, Loss: {1:.3f}'.format(batch_index + 1,
-                                                    avg_loss_across_batches))
-            running_loss = 0.0
-    print()
+    #Create subsets
+    train_dataset = Subset(dataset, range(0, train_end))
+    val_dataset = Subset(dataset, range(train_end, val_end))
+    test_dataset = Subset(dataset, range(val_end, len(dataset)))
 
 
-def validate_one_epoch():
-    model.train(False)
-    running_loss = 0.0
+    #Dataloaders
+    train_loader = DataLoader(train_dataset, batch_size=32)
+    val_loader = DataLoader(val_dataset, batch_size=32)
+    test_loader = DataLoader(test_dataset, batch_size=32)
 
-    for batch_index, batch in enumerate(test_loader):
-        x_batch, y_batch = batch[0].to(device), batch[1].to(device)
+    #Scalar target
+    scaler_target = dataset.scaler_target
 
+
+    ##HYPERPARAMETERS
+    input_size = dataset.X.shape[1]
+
+    learning_rate = 0.0001
+    num_epochs = 50
+    hidden_size = 128
+    output_size = 1
+
+    loss_function = nn.MSELoss()
+    criterion = nn.MSELoss()
+
+    model = LSTM(input_size, hidden_size, output_size )
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    model.to(device)
+
+    train_losses = []
+    val_losses = []
+
+    for epoch in range(num_epochs):
+        model.train()
+        train_loss = 0
+        for batch, (X, y) in enumerate(train_loader):
+            X = X.to(device)
+            y = y.to(device).float()
+
+            if torch.isnan(X).any() or torch.isnan(y).any():
+                print("NaNs found in data!")
+
+            optimizer.zero_grad()
+            output = model(X) # forward pass
+
+            loss = criterion(output, y)  #calc loss, gradient and update param
+            loss.backward()
+            optimizer.step()
+
+            train_loss+=loss.item()
+
+            if (batch + 1) % 10 == 0:
+                print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch + 1}/{len(train_loader)}], Loss: {loss.item():.4f}')
+
+        mean_train_loss = train_loss / len(train_loader)
+        train_losses.append(mean_train_loss)
+
+        #  Validation
+        model.eval()
+        val_loss = 0
         with torch.no_grad():
-            output = model(x_batch)
-            loss = loss_function(output, y_batch)
-            running_loss += loss.item()
+            for X_val, y_val in val_loader:
+                X_val = X_val.to(device)
+                y_val = y_val.to(device).float()
 
-    avg_loss_across_batches = running_loss / len(test_loader)
+                val_output = model(X_val)
+                val_loss += criterion(val_output, y_val).item()
 
-    print('Val Loss: {0:.3f}'.format(avg_loss_across_batches))
-    print('***************************************************')
-    print()
+        mean_val_loss = val_loss / len(val_loader)
+        val_losses.append(mean_val_loss)
 
-learning_rate = 0.005
-num_epochs = 250
-loss_function = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {mean_train_loss:.4f}, Val Loss: {mean_val_loss:.4f}")
 
-for epoch in range(num_epochs):
-    train_one_epoch()
-    validate_one_epoch()
+    print("Training finished!")
+
+    # Test evaluation
+    model.eval()
+    test_loss = 0.0
+    all_preds = []
+    all_targets = []
+    with torch.no_grad():
+        for X_test, y_test in test_loader:
+            X_test = X_test.to(device)
+            y_test = y_test.to(device).float()
+
+            test_output = model(X_test)
+            test_loss += criterion(test_output, y_test).item()
+
+            # Store predictions and targets
+            all_preds.extend(test_output.cpu().numpy())
+            all_targets.extend(y_test.cpu().numpy())
+
+    avg_test_loss = test_loss / len(test_loader)
+    print(f"\nFinal Test Loss: {avg_test_loss:.4f}")
+
+    # Inverse transform predictions and targets
+    all_preds = np.array(all_preds).reshape(-1, 1)  # Ensure 2D shape for scaler
+    all_targets = np.array(all_targets).reshape(-1, 1)
 
 
+    test_dataset = test_loader.dataset  # Access the dataset object
+    preds_inverse = scaler_target.inverse_transform(all_preds)
+    targets_inverse = scaler_target.inverse_transform(all_targets)
 
-with torch.no_grad():
-    predicted = model(X_train.to(device)).to('cpu').numpy()
+    # Flatten back to 1D for plotting
+    preds_inverse = preds_inverse.flatten()
+    targets_inverse = targets_inverse.flatten()
 
-plt.plot(y_train, label='Actual Close')
-plt.plot(predicted, label='Predicted Close')
-plt.xlabel('Day')
-plt.ylabel('Close')
-plt.legend()
-plt.show()
+    # ====== PLOTTING ======
+    # 1. Plot Training & Validation Loss (unchanged)
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(val_losses, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training vs. Validation Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
-train_predictions = predicted.flatten()
-
-dummies = np.zeros((X_train.shape[0], window_size+1))
-dummies[:, 0] = train_predictions
-dummies = scaler.inverse_transform(dummies)
-
-train_predictions = dc(dummies[:, 0])
-
-dummies = np.zeros((X_train.shape[0], window_size+1))
-dummies[:, 0] = y_train.flatten()
-dummies = scaler.inverse_transform(dummies)
-
-new_y_train = dc(dummies[:, 0])
-
-plt.plot(new_y_train, label='Actual Close')
-plt.plot(train_predictions, label='Predicted Close')
-plt.xlabel('Day')
-plt.ylabel('Close')
-plt.legend()
-plt.show()
+    # 2. Plot Test Predictions vs. Actual Close (INVERSE-TRANSFORMED)
+    plt.figure(figsize=(12, 6))
+    plt.plot(targets_inverse, label='Actual Close Price', color='blue', alpha=0.7)
+    plt.plot(preds_inverse, label='Predicted Close Price', color='red', linestyle='--', alpha=0.7)
+    plt.xlabel('Time Steps (Test Set)')
+    plt.ylabel('Close Price')
+    plt.title('Model Predictions vs. Actual Close (Inverse-Transformed)')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
