@@ -33,14 +33,6 @@ def Merge(HistoricalDF, EconomicalDF, SentimentalDF):
     MergedDF.to_excel('MergedDF.xlsx')  # uses $USD
     return MergedDF
 
-def Clean(df):
-    #dropping first 14 values because missing data from calculating ADX,SMA_ATR, EMA_ATR, rsi, OBV (only first value)
-    df = df.iloc[14:].reset_index(drop=True)
-
-    #dropping any other row if it has at least one missing value
-    df = df.dropna().reset_index(drop=True)
-    df.to_excel('MergedAndCleanedDF.xlsx')  # uses $USD
-    return df
 
 def GetData():
     GetHistoric("Google_Stock_Train (2010-2022).csv")
@@ -52,7 +44,6 @@ def GetData():
     SentimentalDF =  pd.read_excel("Sentimental_google_sorted_nltk_scores.xlsx") #GetSentimental()
 
     MergedDF = Merge(HistoricDF, EconomicDF,  SentimentalDF)
-    #CleanedDF = Clean(MergedDF)
 
     return MergedDF
 

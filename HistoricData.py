@@ -14,32 +14,41 @@ end = os.getenv("END")
 
 
 def GetHistoric(file_name):
-    if file_name:
-        HistoricalDF = pd.read_csv(file_name)
+    if file_name == "HistoricalData.xlsx": ## assuming data with only OHLCV and dates
+        HistoricalDF = pd.read_excel(file_name)
         HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
+
+        HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
+
+        print(HistoricalDF_and_TechnicalDF.head())
+        HistoricalDF_and_TechnicalDF.to_excel('HistoricalAndTechnicalData.xlsx')  # uses $USD
+        return HistoricalDF_and_TechnicalDF
+
+    elif file_name == "HistoricalAndTechnicalData.xlsx":
+        HistoricalDF_and_TechnicalDF = pd.read_csv(file_name)
+        return HistoricalDF_and_TechnicalDF
 
     else:
         HistoricalDF = yf.download('goog', start=start, end=end)
-        # Creates new column in DF called medium
+
+        # Creates new column in df called medium
         HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
 
         # formatting
-        ##converting multi dimensional header to 1d header
+        ##converting multi-dimensional header to 1d header
         one_dim_headers = [col[0] for col in HistoricalDF.columns.values]
-        HistoricalDF.columns = one_dim_headers  # Update the DataFrame headers
+        HistoricalDF.columns = one_dim_headers  # update the DataFrame headers
         HistoricalDF = HistoricalDF.reset_index()
         HistoricalDF.rename(columns={"Date": "Dates"}, inplace=True)
         HistoricalDF.to_excel('HistoricalData.xlsx')  # uses $USD
 
-    HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
-    print(HistoricalDF_and_TechnicalDF.head())
-    HistoricalDF_and_TechnicalDF.to_excel('HistoricalAndTechnicalData.xlsx')  # uses $USD
-    return HistoricalDF_and_TechnicalDF
+        HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
+        print(HistoricalDF_and_TechnicalDF.head())
+        HistoricalDF_and_TechnicalDF.to_excel('HistoricalAndTechnicalData.xlsx')  # uses $USD
+        return HistoricalDF_and_TechnicalDF
 
-def GetTechnicalIndicators(df):
+def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
     ###Trend indicators
-
-    ##EMA
     #EMA-12
     df["12_day_EMA"] = df['Close'].ewm(span=12, adjust=False).mean()
 
@@ -83,12 +92,17 @@ def GetTechnicalIndicators(df):
     # Drop unnecessary columns
     df.drop(['previous_close', 'high-low', 'high-prev_close', 'low-prev_close',  '+DI', '-DI', '+DM', '-DM','TR_smooth', '+DM_smooth', '-DM_smooth', 'DX'], axis=1, inplace=True)
 
+
+
     ###Volatility Indicators
     # ATR Average true range
     df["SMA_ATR"] = df['TR'].rolling(window=14, min_periods=1).mean()
     df["EMA_ATR"] = df['TR'].ewm(span=14, adjust=False).mean()
 
     df.drop(['TR'], axis=1, inplace=True)
+
+    #VIX measured by FRED so included in EconomicData.py
+
 
     ###Momentum indicators
     ##RSI
@@ -104,10 +118,8 @@ def GetTechnicalIndicators(df):
     df['avg_gain'] = df['gain'].rolling(window=period, min_periods=1).mean()
     df['avg_loss'] = df['loss'].rolling(window=period, min_periods=1).mean()
 
-    #Calculate RS
+    #Calculate RS & RSI
     df['rs'] = df['avg_gain'] / df['avg_loss']
-
-    #Calculate RSI
     df['rsi'] = 100 - (100 / (1 + df['rs']))
 
     #Drop intermediate columns
@@ -116,6 +128,11 @@ def GetTechnicalIndicators(df):
     #drop first 13 values
     df.loc[:13,"rsi"] =np.nan
     df['rsi'].fillna(df['rsi'].mean(), inplace=True)
+
+    #MACD
+    df['MACD'] = df['12_day_EMA'] - df['26_day_EMA']
+
+
 
     ###Volume based indicators
     #OBV

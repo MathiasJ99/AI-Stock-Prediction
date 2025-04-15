@@ -1,17 +1,12 @@
+import optuna
 import torch
 import torch.nn as nn
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import torch.utils.data
 import torch.optim as optim
-
-from  Evaluation import evaluate
-#import DataCollection
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import StandardScaler
-
 from torch.utils.data import Dataset, Subset, DataLoader
+from optuna.storages import RDBStorage
 
 
 class AllData(Dataset):
@@ -58,6 +53,10 @@ class AllData(Dataset):
 class LSTM(nn.Module):
     def __init__(self, input_size, hidden_size,  output_size, num_layers, dropout):
         super(LSTM,self).__init__()
+
+        if num_layers <= 1:
+            dropout = 0
+
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, dropout = dropout, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
 
@@ -68,56 +67,67 @@ class LSTM(nn.Module):
         return out
 
 
-
-if __name__ == "__main__":
-    # Use GPU
+def objective(trial):
+    #------ GPU settings -----
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     available = torch.cuda.is_available()
     count = torch.cuda.device_count()
     print(f"Using {device} device, available {available}, count {count}")
+    print(f"trial {trial.number}")
 
-    #Randomisation
+
+    #------- hyperparameters -------
     torch.manual_seed(99)
-    batch_size = 32
-    window_size = 21
 
-    #Creating datasets
+    learning_rate = trial.suggest_float("lr", 0.00001, 0.001, log=True)
+    num_layers = trial.suggest_int("num_layers", 1, 3)
+    hidden_size = trial.suggest_int("hidden_size", 128, 1024)
+    dropout = trial.suggest_float("dropout", 0.1, 0.5)
+    window_size = trial.suggest_int("sequence_length", 10, 60)
+    batch_size = trial.suggest_categorical("batch_size", [32, 64])
+    optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW","RMSprop" ,"SGD"])
+
+    # ------ dataset stuff -------
+    # Creating datasets
     dataset = AllData(sequence_length=window_size)
 
     train_end = int(len(dataset) * 0.7)
     val_end = int(len(dataset) * 0.85)
 
-    #Create subsets
+    # Create subsets
     train_dataset = Subset(dataset, range(0, train_end))
     val_dataset = Subset(dataset, range(train_end, val_end))
     test_dataset = Subset(dataset, range(val_end, len(dataset)))
 
-    #Dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=32)
-    val_loader = DataLoader(val_dataset, batch_size=32)
-    test_loader = DataLoader(test_dataset, batch_size=32)
+    # Dataloaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
-    #Scalar target
+    # Scalar target
     scaler_target = dataset.scaler_target
 
-    ##HYPERPARAMETERS
+    #----- model & optimzer ----
     input_size = dataset.X.shape[1]
-    learning_rate = 0.0003
-    num_epochs = 200
-    hidden_size = 512
-    num_layers = 1
-    dropout = 0.3
     output_size = 1
-
-    loss_function = nn.MSELoss()
-    criterion = nn.MSELoss()
-    model = LSTM(input_size, hidden_size, output_size, num_layers, dropout )
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+    model = LSTM(input_size, hidden_size, output_size, num_layers, dropout)
     model.to(device)
 
+    if optimizer_name == "AdamW":
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    elif optimizer_name == "RMSprop":
+        optimizer = optim.RMSprop(model.parameters(), lr=learning_rate)
+    elif optimizer_name == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr = learning_rate)
+    else:  # Adam
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    criterion = nn.MSELoss()  # Mean Squared Error is common for price prediction
+
+    #-------- training -------
     train_losses = []
     val_losses = []
+    num_epochs = 200
 
     for epoch in range(num_epochs):
         model.train()
@@ -135,13 +145,13 @@ if __name__ == "__main__":
 
             train_loss+=loss.item()
 
-            if (batch + 1) % 10 == 0:
-                print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch + 1}/{len(train_loader)}], Loss: {loss.item():.4f}')
+            #if (batch + 1) % 10 == 0:
+            #    print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch + 1}/{len(train_loader)}], Loss: {loss.item():.4f}')
 
         mean_train_loss = train_loss / len(train_loader)
         train_losses.append(mean_train_loss)
 
-        #  Validation
+        #----- Validation ----------
         model.eval()
         val_loss = 0
         with torch.no_grad():
@@ -155,47 +165,52 @@ if __name__ == "__main__":
         mean_val_loss = val_loss / len(val_loader)
         val_losses.append(mean_val_loss)
 
-        print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {mean_train_loss:.4f}, Val Loss: {mean_val_loss:.4f}")
+        print(f"Trial {trial.number} - Epoch {epoch+1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
 
-    print("Training finished!")
+        # ----- pruning -----
+        trial.report(mean_val_loss, epoch)
+        if trial.should_prune():
+            print(f"Trial {trial.number} pruned at epoch {epoch + 1}.")
 
-    # Test evaluation
-    model.eval()
-    test_loss = 0.0
-    all_preds = [] # predicted
-    all_targets = [] # actual
+    print(f"Trial {trial.number} finished. Final Validation Loss: {mean_val_loss:.6f}")
+    return val_loss
 
-    with torch.no_grad():
-        for X_test, y_test in test_loader:
-            X_test = X_test.to(device)
-            y_test = y_test.to(device).float()
+if __name__ == "__main__":
+    # --- Run the Optimization ---
+    study_name = "lstm-price-optimization-1"
+    storage = RDBStorage(
+        url=f"sqlite:///{study_name}.db",
+        engine_kwargs={"connect_args": {"check_same_thread": False}}
+    )
 
-            test_output = model(X_test)
-            test_loss += criterion(test_output, y_test).item()
+    # Use a sampler like TPE (Bayesian) and a pruner
+    study = optuna.create_study(
+        study_name = study_name,
+        storage = storage,
+        #load_if_exists = True,
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=99),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10))
 
-            # store predictions and targets
-            all_preds.extend(test_output.cpu().numpy())
-            all_targets.extend(y_test.cpu().numpy())
+    study.optimize(objective, n_trials=20)
 
-    avg_test_loss = test_loss / len(test_loader)
-    print(f"\nFinal Test Loss: {avg_test_loss:.4f}")
+    print("Best trial:")
+    trial = study.best_trial
+    print(f"  Value (Validation Loss): {trial.value}")
+    print(" best params: ")
+    for key, value in trial.params.items():
+        print(f"{key}: {value}")
 
-    # reshape and inverse transform predictions and targets
-    all_preds = np.array(all_preds).reshape(-1, 1)  # Ensure 2D shape for scaler
-    all_targets = np.array(all_targets).reshape(-1, 1)
+    #TODO
+    # Retrain model with best hyperparameters
+    # train on entire dataset
+    # save model
 
-    preds_inverse = scaler_target.inverse_transform(all_preds)
-    targets_inverse = scaler_target.inverse_transform(all_targets)
 
-    # flatten  to 1D for plotting
-    preds_inverse = preds_inverse.flatten()
-    targets_inverse = targets_inverse.flatten()
+''' 
+    # Save the entire best model
+    model_filename = "best_LSTM_model_Gold.pth"
+    torch.save(best_model, model_filename)
+    print(f"Best model (full) saved to {model_filename}")
 
-    # turn into tensors
-    preds_tensor = torch.from_numpy(preds_inverse).float()
-    targets_tensor = torch.from_numpy(targets_inverse).float()
-
-    ##EVALUATE
-    evaluate(preds_tensor, targets_tensor,preds_inverse , targets_inverse, train_losses, val_losses)
-
-    torch.save(model,"LSTM.pth")
+'''

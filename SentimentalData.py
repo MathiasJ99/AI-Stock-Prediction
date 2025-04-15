@@ -9,7 +9,7 @@ import torch.nn as nn
 from transformers import RobertaTokenizer, RobertaForSequenceClassification
 
 def scrape_page(page, ticker, base_url):
-    """Scrapes news articles for a given stock ticker and page number."""
+    #Scrapes news articles for a given stock ticker and page number
     url = f'{base_url}/news/{ticker}-stock?p={page}'
     try:
         response = requests.get(url, timeout=10)
@@ -26,14 +26,8 @@ def scrape_page(page, ticker, base_url):
         try:
             datetime_raw = article.find('time', class_='latest-news__date').get('datetime')
             title = article.find('a', class_='news-link').text.strip()
-            source = article.find('span', class_='latest-news__source').text.strip()
-            link = article.find('a', class_='news-link').get('href')
-            link = base_url + link if link.startswith('/') else link
+            page_data.append([datetime_raw, title])
 
-            top_sentiment = ''
-            sentiment_score = 0
-
-            page_data.append([datetime_raw, title, source, link, top_sentiment, sentiment_score])
         except AttributeError:
             continue
 
@@ -41,13 +35,12 @@ def scrape_page(page, ticker, base_url):
 
 
 def scrape_news(ticker, base_url, pages, max_workers=10):
-    """Scrapes multiple pages of news for a given ticker."""
-    columns = ['datetime', 'title', 'source', 'link', 'top_sentiment', 'sentiment_score']
+    #Scrapes multiple pages of news for a given ticker.
+    columns = ['datetime', 'title']
     data = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_page = {executor.submit(scrape_page, page, ticker, base_url): page for page in range(1, pages + 1)}
-
         for future in as_completed(future_to_page):
             result = future.result()
             if result:
@@ -57,7 +50,7 @@ def scrape_news(ticker, base_url, pages, max_workers=10):
 
 
 def process_news_data(df):
-    """Processes the scraped news data."""
+    #Processes the scraped news data.
     if df.empty:
         print("No data scraped.")
         return None
@@ -87,19 +80,16 @@ def give_scores_nltk(df):
         if col.startswith("Title_"):
             df[col] = df[col].astype(str).apply(lambda text: sia.polarity_scores(text)['compound'])
 
-
     return df
 
-''' 
+
 def give_scores_bert(df):
-    # Load a pre-trained RoBERTa model fine-tuned on financial sentiment analysis
+    #load pre-trained RoBERTa model fine-tuned on financial sentiment analysis
     tokenizer = RobertaTokenizer.from_pretrained("mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
-    model = RobertaForSequenceClassification.from_pretrained(
-        "mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
+    model = RobertaForSequenceClassification.from_pretrained("mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
 
-    # Ensure model is in evaluation mode
+    # turn model into eval mode
     model.eval()
-
     def get_sentiment_score(text):
         inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
         with torch.no_grad():
@@ -107,20 +97,16 @@ def give_scores_bert(df):
 
         # Convert logits to probabilities
         probs = torch.nn.functional.softmax(outputs.logits, dim=1).squeeze().tolist()
-
         # Assign a sentiment score (-1 for negative, 0 for neutral, 1 for positive)
         sentiment_score = (-1 * probs[0]) + (0 * probs[1]) + (1 * probs[2])
-
         return sentiment_score
 
     # Apply function to each "Title_" column
     for col in df.columns:
         if col.startswith("Title_"):
-            df[f"{col}_score"] = df[col].astype(str).apply(get_sentiment_score)
+            df[col] = df[col].astype(str).apply(get_sentiment_score)
 
     return df
-
-'''
 
 def cleandf(df): ## what to do with missing values
     title_columns = [col for col in df.columns if col.startswith('Title_')]
@@ -128,42 +114,50 @@ def cleandf(df): ## what to do with missing values
     # Calculate the daily average (excluding zeros)
     df['daily_avg'] = df[title_columns].replace(0, pd.NA).mean(axis=1)
 
-    # Replace zeros with the daily average
+    # if less than 5 titles, replace missing scores with daily average
     for col in title_columns:
         df[col] = df[col].mask(df[col] == 0, df['daily_avg'])
 
     # Drop the temporary 'daily_avg' column
     df.drop(columns=['daily_avg'], inplace=True)
 
+    df = df.ffill()## fill any gaps
+
     print(df.head())
     return df
 
-def GetSenimental():
-    ticker = "googl"
-    base_url = "https://markets.businessinsider.com"
-    pages = 650
-    df = scrape_news(ticker, base_url, pages)
-    df = process_news_data(df)
+def GetSenimental(file_name, ticker):
+    if (file_name == "Sentimental_google_sorted_scores.xlsx" or file_name == "Sentimental_gold_sorted_scores.xlsx" or file_name == "Sentimental_dowjones_sorted_scores.xlsx"):
+        df = pd.read_excel(file_name)
+        return df
 
-    df.to_excel("Sentimental_google_sorted_titles.xlsx", index=False)
-    ## loading in news sources
-    #file_path = "Sentimental_sorted.xlsx"
-    #df = pd.read_excel(file_path)
+    else:
+        ##options
+        if ticker == None:
+            ticker = "googl"
+        base_url = "https://markets.businessinsider.com"
+        pages = 650
 
-    df=give_scores_nltk(df)
-    #df = give_scores_bert(df)
-    df = cleandf(df)
+        #gather data and save it to excel file
+        df = scrape_news(ticker, base_url, pages)
+        df = process_news_data(df)
+        file_path_titles = "Sentimental_"+ticker+"_sorted_titles.xlsx"
+        df.to_excel(file_path_titles, index=False)
+
+        #score data (REMOVE 1)  and clean data
+        #df=give_scores_nltk(df)
+        df=give_scores_bert(df)
+        df=cleandf(df)
+
+        #output and saving data
+        file_path_scores = "Sentimental_"+ticker+"_sorted_scores.xlsx"
+        print(df.head())
+        df.to_excel(file_path_scores, index=False)
+
+        return df
 
 
-    print(df.head())
-    df.to_excel("Sentimental_google_sorted_nltk_scores.xlsx", index=False)
-    #df_sorted.to_excel("Sentimental_sorted.xlsx", index=False)
-    #print("Data saved to Sentimental_sorted.xlsx")
 
-    return df
-
-
-
-#GetSenimental()
+GetSenimental(None,None)
 
 

@@ -1,5 +1,4 @@
 import time
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 import os
@@ -12,28 +11,24 @@ end = os.getenv("END")
 
 
 def GetEconomic():
-    Daily_Economic_obj = ["DFF","DFII5","DFII10","T5YIE","T10YIE"]
-    Monthly_Economic_obj = ["UNRATE","CPIAUCSL","A229RX0","INDPRO"]
-    Quarterly_Economic_obj = ["GDP", "A939RX0Q048SBEA"]
+    ##tags / features
+    Daily_Economic_obj = ["DFF","DFII5","DFII10","T5YIE","T10YIE","VIXCLS","DTWEXBGS","DCOILWTICO","USEPUINDXD"]
+    Monthly_Economic_obj = ["UNRATE","CPIAUCSL","A229RX0","INDPRO","M2SL","PCEPI","UMCSENT","BOPGSTB"]
+    Quarterly_Economic_obj = ["GDP", "A939RX0Q048SBEA","GNP","PSAVE","FGEXPND","CP"]
 
+    # Call API function
     Daily_data_dfs = APICall(Daily_Economic_obj)
     Monthly_data_dfs = APICall(Monthly_Economic_obj)
     Quarterly_Data_dfs = APICall(Quarterly_Economic_obj)
 
-    #merge data together on date
+    #Merge data of same frequency together on date
     DailyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Daily_data_dfs)
     MonthlyDF =reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Monthly_data_dfs)
     QuarterlyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Quarterly_Data_dfs)
 
-    #testing
-    #DailyDF.to_excel('dailyEconomicalData.xlsx')
-    #MonthlyDF.to_excel('monthlyEconomicalData.xlsx')
-
-    #adding month column to all to merge them on it
+    #Add month column  to Daily and Monthly df, then merging them
     DailyDF["Month"] = DailyDF["Dates"].dt.to_period("M")
     MonthlyDF["Month"] = MonthlyDF["Dates"].dt.to_period("M")
-
-    #merging Day & month df
     Day_MonthDF = pd.merge(DailyDF,MonthlyDF, on="Month", how="left")
 
     #formating df
@@ -41,11 +36,9 @@ def GetEconomic():
     Day_MonthDF = Day_MonthDF.rename(columns = {"Dates_x": "Dates"})
     Day_MonthDF = Day_MonthDF.drop(columns=["Dates_y"])
 
-    # adding quarter column to merge them on
+    #Add Quarter column  to Day&month and quarter df, then merging them
     Day_MonthDF["Quarter"] = Day_MonthDF["Dates"].dt.to_period("Q")
     QuarterlyDF["Quarter"] = QuarterlyDF["Dates"].dt.to_period("Q")
-
-    #merging day&month df with quarter df
     EconomicalDF = pd.merge(Day_MonthDF, QuarterlyDF,on="Quarter", how="left")
 
     #formating df
@@ -53,37 +46,30 @@ def GetEconomic():
     EconomicalDF = EconomicalDF.rename(columns={"Dates_x": "Date"})
     EconomicalDF = EconomicalDF.drop(columns=["Dates_y"])
 
-
-    #EconomicalDF['Date'] = pd.to_datetime(EconomicalDF['Date'], format='%m/%d/%Y %I:%M:%S %p', errors='coerce')
     EconomicalDF['Date'] = EconomicalDF['Date'].dt.date
 
-    EconomicalDF = EconomicalDF.ffill()
+    EconomicalDF = EconomicalDF.ffill() ## fix gaps in data
 
     print(EconomicalDF.head)
-    #testing
     EconomicalDF.to_excel('EconomicData.xlsx')
     return EconomicalDF
 
 
-def APICall(Data):# returns array of dfs in form [date, feature]
+def APICall(Tags):#input: an array of tags, output: array of dfs in form [date, feature]
     #FRED API limits
     ## 120 Requests / minute
     ## 1000 records / request & maybe 100,000 observations / request
 
     fred = Fred(api_key=os.getenv("FRED_API_KEY"))
-    All_data = []
+    data = []
 
-    # iterate though econ obj and get df of dates and data and append to All_data
-    for obj in Data:
-        result = fred.get_series(series_id=obj,observation_start=start, observation_end=end)
-        resultdf = pd.DataFrame(result)
-        resultdf = resultdf.reset_index()
-        resultdf.columns = ["Dates", obj]
-        All_data.append(resultdf)
+    # iterate though tags provided call api and get [Dates, data] and add that to data df
+    for tag in Tags:
+        result = fred.get_series(series_id=tag,observation_start=start, observation_end=end)
+        result_df = pd.DataFrame(result)
+        result_df = result_df.reset_index()
+        result_df.columns = ["Dates", tag]
+        data.append(result_df)
         time.sleep(0.11)
 
-    return All_data
-
-
-
-#GetEconomic()
+    return data
