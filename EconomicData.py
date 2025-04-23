@@ -10,48 +10,55 @@ start = os.getenv("START")
 end = os.getenv("END")
 
 
-def GetEconomic():
-    ##tags / features
-    Daily_Economic_obj = ["DFF","DFII5","DFII10","T5YIE","T10YIE","VIXCLS","DTWEXBGS","DCOILWTICO","USEPUINDXD"]
-    Monthly_Economic_obj = ["UNRATE","CPIAUCSL","A229RX0","INDPRO","M2SL","PCEPI","UMCSENT","BOPGSTB"]
-    Quarterly_Economic_obj = ["GDP", "A939RX0Q048SBEA","GNP","PSAVE","FGEXPND","CP"]
+def GetEconomic(file_path):
+    if file_path == "EconomicData.xlsx":
+        EconomicalDF = pd.read_excel(file_path)
 
-    # Call API function
-    Daily_data_dfs = APICall(Daily_Economic_obj)
-    Monthly_data_dfs = APICall(Monthly_Economic_obj)
-    Quarterly_Data_dfs = APICall(Quarterly_Economic_obj)
+        return EconomicalDF
+    else:
+        ##tags / features
+        Daily_Economic_obj = ["DFF","DFII5","DFII10","T5YIE","T10YIE","VIXCLS","DTWEXBGS","DCOILWTICO","USEPUINDXD"]
+        Monthly_Economic_obj = ["UNRATE","CPIAUCSL","A229RX0","INDPRO","M2SL","PCEPI","UMCSENT","BOPGSTB"]
+        Quarterly_Economic_obj = ["GDP", "A939RX0Q048SBEA","GNP","PSAVE","FGEXPND","CP"]
 
-    #Merge data of same frequency together on date
-    DailyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Daily_data_dfs)
-    MonthlyDF =reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Monthly_data_dfs)
-    QuarterlyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Quarterly_Data_dfs)
+        # Call API function
+        Daily_data_dfs = APICall(Daily_Economic_obj)
+        Monthly_data_dfs = APICall(Monthly_Economic_obj)
+        Quarterly_Data_dfs = APICall(Quarterly_Economic_obj)
 
-    #Add month column  to Daily and Monthly df, then merging them
-    DailyDF["Month"] = DailyDF["Dates"].dt.to_period("M")
-    MonthlyDF["Month"] = MonthlyDF["Dates"].dt.to_period("M")
-    Day_MonthDF = pd.merge(DailyDF,MonthlyDF, on="Month", how="left")
+        #Merge data of same frequency together on date
+        DailyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Daily_data_dfs)
+        MonthlyDF =reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Monthly_data_dfs)
+        QuarterlyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Quarterly_Data_dfs)
 
-    #formating df
-    Day_MonthDF = Day_MonthDF.drop(columns=["Month"])
-    Day_MonthDF = Day_MonthDF.rename(columns = {"Dates_x": "Dates"})
-    Day_MonthDF = Day_MonthDF.drop(columns=["Dates_y"])
+        #Add month column  to Daily and Monthly df, then merging them
+        DailyDF["Month"] = DailyDF["Dates"].dt.to_period("M")
+        MonthlyDF["Month"] = MonthlyDF["Dates"].dt.to_period("M")
+        Day_MonthDF = pd.merge(DailyDF,MonthlyDF, on="Month", how="left")
 
-    #Add Quarter column  to Day&month and quarter df, then merging them
-    Day_MonthDF["Quarter"] = Day_MonthDF["Dates"].dt.to_period("Q")
-    QuarterlyDF["Quarter"] = QuarterlyDF["Dates"].dt.to_period("Q")
-    EconomicalDF = pd.merge(Day_MonthDF, QuarterlyDF,on="Quarter", how="left")
+        #formating df
+        Day_MonthDF = Day_MonthDF.drop(columns=["Month"])
+        Day_MonthDF = Day_MonthDF.rename(columns = {"Dates_x": "Dates"})
+        Day_MonthDF = Day_MonthDF.drop(columns=["Dates_y"])
 
-    #formating df
-    EconomicalDF = EconomicalDF.drop(columns=["Quarter"])
-    EconomicalDF = EconomicalDF.rename(columns={"Dates_x": "Date"})
-    EconomicalDF = EconomicalDF.drop(columns=["Dates_y"])
+        #Add Quarter column  to Day&month and quarter df, then merging them
+        Day_MonthDF["Quarter"] = Day_MonthDF["Dates"].dt.to_period("Q")
+        QuarterlyDF["Quarter"] = QuarterlyDF["Dates"].dt.to_period("Q")
+        EconomicalDF = pd.merge(Day_MonthDF, QuarterlyDF,on="Quarter", how="left")
 
-    EconomicalDF['Date'] = EconomicalDF['Date'].dt.date
+        #formating df
+        EconomicalDF = EconomicalDF.drop(columns=["Quarter"])
+        EconomicalDF = EconomicalDF.rename(columns={"Dates_x": "Date"})
+        EconomicalDF = EconomicalDF.drop(columns=["Dates_y"])
 
-    EconomicalDF = EconomicalDF.ffill() ## fix gaps in data
+        EconomicalDF['Date'] = EconomicalDF['Date'].dt.date
 
-    print(EconomicalDF.head)
-    EconomicalDF.to_excel('EconomicData.xlsx')
+        EconomicalDF = EconomicalDF.ffill() ## fix gaps in data
+        EconomicalDF = EconomicalDF.bfill()
+
+        print(EconomicalDF.head)
+        EconomicalDF.to_excel('EconomicData.xlsx')
+
     return EconomicalDF
 
 

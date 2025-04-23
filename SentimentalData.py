@@ -126,8 +126,10 @@ def cleandf(df): ## what to do with missing values
     print(df.head())
     return df
 
-def GetSenimental(file_name, ticker):
-    if (file_name == "Sentimental_google_sorted_scores.xlsx" or file_name == "Sentimental_gold_sorted_scores.xlsx" or file_name == "Sentimental_dowjones_sorted_scores.xlsx"):
+def GetSentimental(file_name, ticker):
+    sentimental_path = "Sentimental_" + ticker + "_sorted_scores.xlsx"
+
+    if (file_name == sentimental_path):
         df = pd.read_excel(file_name)
         return df
 
@@ -158,6 +160,6 @@ def GetSenimental(file_name, ticker):
 
 
 
-GetSenimental(None,None)
+#GetSentimental(None,None)
 
 

@@ -13,23 +13,26 @@ start = os.getenv("START")
 end = os.getenv("END")
 
 
-def GetHistoric(file_name):
-    if file_name == "HistoricalData.xlsx": ## assuming data with only OHLCV and dates
+def GetHistoric(file_name, ticker):
+    historic_path = "HistoricalData_"+ticker+".xlsx"
+    historic_technical_path = "HistoricalAndTechnicalData_"+ticker+".xlsx"
+
+    if file_name == historic_path: ## assuming data with only OHLCV and dates
         HistoricalDF = pd.read_excel(file_name)
         HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
 
         HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
 
         print(HistoricalDF_and_TechnicalDF.head())
-        HistoricalDF_and_TechnicalDF.to_excel('HistoricalAndTechnicalData.xlsx')  # uses $USD
+        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)  # uses $USD
         return HistoricalDF_and_TechnicalDF
 
-    elif file_name == "HistoricalAndTechnicalData.xlsx":
-        HistoricalDF_and_TechnicalDF = pd.read_csv(file_name)
+    elif file_name == historic_technical_path:
+        HistoricalDF_and_TechnicalDF = pd.read_excel(file_name)
         return HistoricalDF_and_TechnicalDF
 
     else:
-        HistoricalDF = yf.download('goog', start=start, end=end)
+        HistoricalDF = yf.download(ticker, start=start, end=end)
 
         # Creates new column in df called medium
         HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
@@ -39,12 +42,11 @@ def GetHistoric(file_name):
         one_dim_headers = [col[0] for col in HistoricalDF.columns.values]
         HistoricalDF.columns = one_dim_headers  # update the DataFrame headers
         HistoricalDF = HistoricalDF.reset_index()
-        HistoricalDF.rename(columns={"Date": "Dates"}, inplace=True)
-        HistoricalDF.to_excel('HistoricalData.xlsx')  # uses $USD
+        HistoricalDF.to_excel(historic_path)
 
         HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
         print(HistoricalDF_and_TechnicalDF.head())
-        HistoricalDF_and_TechnicalDF.to_excel('HistoricalAndTechnicalData.xlsx')  # uses $USD
+        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)  # uses $USD
         return HistoricalDF_and_TechnicalDF
 
 def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
@@ -127,7 +129,7 @@ def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
 
     #drop first 13 values
     df.loc[:13,"rsi"] =np.nan
-    df['rsi'].fillna(df['rsi'].mean(), inplace=True)
+    df["rsi"] = df['rsi'].fillna(df['rsi'].mean())
 
     #MACD
     df['MACD'] = df['12_day_EMA'] - df['26_day_EMA']

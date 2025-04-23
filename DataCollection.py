@@ -27,26 +27,40 @@ def Merge(HistoricalDF, EconomicalDF, SentimentalDF):
     MergedDF = pd.merge(HistoricalAndEconomicalDF, SentimentalDF, on="Date",  how="left")
 
     ##Formatting
-    MergedDF = MergedDF.drop(columns = ["Unnamed: 0_y", "Unnamed: 0_x"])
-    MergedDF['Date'] = MergedDF['Date'].dt.date
+    MergedDF = MergedDF.drop(columns = ["Unnamed: 0_y", "Unnamed: 0_x"], errors="ignore")
 
-    MergedDF.to_excel('MergedDF.xlsx')  # uses $USD
+    MergedDF['Date'] = MergedDF['Date'].dt.date
+    MergedDF = MergedDF.ffill()
+    MergedDF = MergedDF.bfill()
+
     return MergedDF
 
 
 def GetData():
-    GetHistoric("Google_Stock_Train (2010-2022).csv")
-    GetEconomic()
+    #GetHistoric("Google_Stock_Train (2010-2022).csv")
+    #GetEconomic()
+    ## GOLD dataset - ticker_his = GC=F, ticker_news = gold
+    ## GOOGlE dataset - both = googl
+    ##
+    ticker_historic = "GC=F"
+    ticker_news = "gold"
 
+    HistoricDF = GetHistoric("HistoricalAndTechnicalData_GC=F.xlsx", ticker_historic)
+    EconomicDF = GetEconomic("EconomicData.xlsx")
+    SentimentalDF = GetSentimental("Sentimental_gold_sorted_scores.xlsx",ticker_news)
 
+    ''' 
     HistoricDF = pd.read_excel("HistoricalAndTechnicalData.xlsx") # GetHistoric("Google_Stock_Train (2010-2022).csv") or GetHistoric() if using yfinance
     EconomicDF = pd.read_excel("EconomicData.xlsx") #GetEconomic()
     SentimentalDF =  pd.read_excel("Sentimental_google_sorted_nltk_scores.xlsx") #GetSentimental()
+    '''
 
+    save_file_title = "MergedDF_" + ticker_news + ".xlsx"
     MergedDF = Merge(HistoricDF, EconomicDF,  SentimentalDF)
+    MergedDF.to_excel(save_file_title, index=False)  # uses $USD
 
     return MergedDF
 
 #testing
-print(GetData().head())
+#print(GetData().head())
 
