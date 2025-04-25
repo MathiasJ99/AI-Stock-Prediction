@@ -80,12 +80,12 @@ class LSTM(nn.Module):
 
     def forward(self, x):
         out, _ = self.lstm(x)
-        out = self.relu(out)
+        #out = self.relu(out)
         out = self.fc(out[:, -1, :])
         return out
 
 class CNN_LSTM(nn.Module):
-    def __init__(self,input_size,window_size, num_filters, kernel_size, lstm_hidden_size, num_layers, output_size):
+    def __init__(self,input_size,window_size, num_filters, kernel_size, lstm_hidden_size, num_layers, dropout, output_size):
         super(CNN_LSTM, self).__init__()
         #attributes
         self.input_size = input_size
@@ -96,16 +96,23 @@ class CNN_LSTM(nn.Module):
         self.num_layers = num_layers
         self.output_size = output_size
 
+        if num_layers <= 1:
+            self.dropout = 0
+        else:
+            self.dropout = dropout
+
+
         #1d conv layer
         self.conv1d = nn.Conv1d(in_channels=1, out_channels=num_filters, kernel_size=kernel_size)
-        # relu layer
+        # relu activation func
         self.relu = nn.ReLU()
 
         #LSTM Layer
-        cnn_output_len = window_size - kernel_size +1
-        self.lstm = nn.LSTM(input_size=num_filters * cnn_output_len,  # flattened output from CNN
+        self.cnn_output_len = window_size - kernel_size +1
+        self.lstm = nn.LSTM(input_size=num_filters * input_size,  # flattened output from CNN
                             hidden_size=lstm_hidden_size,
                             num_layers=num_layers,
+                            dropout=dropout,
                             batch_first=True)
 
         #Fc linear layer
@@ -114,8 +121,9 @@ class CNN_LSTM(nn.Module):
     def forward(self, x):
         #apply cnn
         if len(x.shape) == 3:
-            x = x.unsqueeze(1)  # Add the channel dimension here
+            x = x.unsqueeze(1)  #
         batch_size, channels, window_size, input_size = x.size()
+        #make sure its feature wise processing
         x = x.reshape(batch_size * input_size, channels, window_size)
         x = self.conv1d(x)
 
@@ -123,17 +131,92 @@ class CNN_LSTM(nn.Module):
         x = self.relu(x)
 
         #change x for lstm input
-        cnn_output_len = window_size - self.kernel_size + 1
-        x = x.view(batch_size, input_size, self.num_filters, cnn_output_len)
-        x = x.permute(0, 3, 1, 2).contiguous()  # (batch_size, cnn_output_len, input_size, num_filters)
-        x = x.view(batch_size, input_size , cnn_output_len * self.num_filters)  # Flatten for LSTM input
+        x = x.view(batch_size, input_size, self.num_filters, self.cnn_output_len)
+        x = x.permute(0, 3, 1, 2).contiguous()  # [batch_size, cnn_output_len, input_size, num_filters]
+        x = x.view(batch_size, self.cnn_output_len, input_size * self.num_filters) # [batch size, window, input size]
 
         # apply lstm layer(s)
-        x = x.permute(0, 1, 2)  # Make it (batch_size, seq_len, input_size) for LSTM
         out, _ = self.lstm(x)
+
         #fc layer
         out = self.fc(out[:, -1, :])
         return out
+
+def train_validate_model(model,train_loader, val_loader, optimizer, criterion, trial, epochs, patience):
+    # -------- training -------
+    train_losses = []
+    val_losses = []
+    num_epochs = epochs
+    best_val_loss = float("inf")
+    patience = patience
+    patience_counter = 0
+
+    for epoch in range(num_epochs):
+        model.train()
+        train_loss = 0
+        for batch, (X, y) in enumerate(train_loader):
+            X = X.to(device)
+            y = y.to(device).float()
+
+            optimizer.zero_grad()
+            output = model(X)  # forward pass
+
+            loss = criterion(output, y)  # calc loss, gradient and update param
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+
+        mean_train_loss = train_loss / len(train_loader)
+        train_losses.append(mean_train_loss)
+
+        # ----- Validation ----------
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for X_val, y_val in val_loader:
+                X_val = X_val.to(device)
+                y_val = y_val.to(device).float()
+
+                val_output = model(X_val)
+                val_loss += criterion(val_output, y_val).item()
+
+        mean_val_loss = val_loss / len(val_loader)
+        val_losses.append(mean_val_loss)
+
+        if trial is not None:
+            print(f"Trial {trial.number} - Epoch {epoch + 1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
+        else:
+            print(f"Epoch {epoch + 1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
+
+
+        ## prevent overfitting
+        if mean_val_loss < best_val_loss:
+            best_val_loss = mean_val_loss
+            patience_counter = 0  # Reset counter when improvement happens
+        else:
+            patience_counter += 1
+            # print(f"No improvement in val loss for {patience_counter} epochs.")
+            if patience_counter >= patience:
+                print(f"Early stopping triggered val didn't improve for {patience} epochs")
+                break  # Stops training
+
+        # ----- prune underperforming models -----
+        if trial is not None:
+            trial.report(mean_val_loss, epoch)
+            if trial.should_prune():
+                print(f"Trial {trial.number} pruned at epoch {epoch + 1}.")
+                raise TrialPruned()
+
+    if trial is not None:
+        print(f"Trial {trial.number} finished. Final Validation Loss: {mean_val_loss:.6f}")
+    else:
+        print(f"Final Validation Loss: {mean_val_loss:.6f}")
+
+    return mean_val_loss, train_losses, val_losses, model
+
+def test_model():
+    pass
 
 ## optimize hyperparameters
 def make_objective(model, data):
@@ -142,6 +225,7 @@ def make_objective(model, data):
         # ------- hyperparameters part 1 (common for all models) -------
         window_size = trial.suggest_int("window_size", 5, 25)
         batch_size = trial.suggest_categorical("batch_size", [32, 64])
+        dropout = trial.suggest_float("dropout", 0.1, 0.9)
 
         # ------ dataset stuff -------
         # Creating datasets
@@ -171,7 +255,6 @@ def make_objective(model, data):
             learning_rate = trial.suggest_float("learning_rate", 0.0001, 0.01, log=True)
             num_layers = trial.suggest_int("num_layers", 1, 5)
             hidden_size = trial.suggest_int("hidden_size", 64, 1024)
-            dropout = trial.suggest_float("dropout", 0.1, 0.9)
             optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "RMSprop", "SGD"])
 
             model = LSTM(input_size, hidden_size, output_size, num_layers, dropout)
@@ -184,7 +267,7 @@ def make_objective(model, data):
             num_filters = trial.suggest_int("num_filters", 1, 256)
             kernel_size = trial.suggest_int("kernel_size", 1, 1)
 
-            model = CNN_LSTM(input_size=input_size, window_size=window_size,num_filters=num_filters, kernel_size=kernel_size, lstm_hidden_size=lstm_hidden_size, num_layers=num_layers, output_size=output_size)
+            model = CNN_LSTM(input_size=input_size, window_size=window_size,num_filters=num_filters, kernel_size=kernel_size, lstm_hidden_size=lstm_hidden_size, num_layers=num_layers,dropout=dropout, output_size=output_size)
 
         model.to(device)
 
@@ -201,75 +284,23 @@ def make_objective(model, data):
         criterion.to(device)
 
 
-        #-------- training -------
-        train_losses = []
-        val_losses = []
-        num_epochs = 50
-        best_val_loss = float("inf")
-        patience = 10
-        patience_counter = 0
+        #-------- training & val -------
+        mean_val_loss, train_losses, val_losses, best_model= train_validate_model(
+            model= model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            criterion= criterion,
+            trial = trial,
+            epochs = 15,
+            patience = 10
+        )
 
-        for epoch in range(num_epochs):
-            model.train()
-            train_loss = 0
-            for batch, (X, y) in enumerate(train_loader):
-                X = X.to(device)
-                y = y.to(device).float()
-
-                optimizer.zero_grad()
-                output = model(X) # forward pass
-
-                loss = criterion(output, y)  #calc loss, gradient and update param
-                loss.backward()
-                optimizer.step()
-
-                train_loss+=loss.item()
-
-                #if (batch + 1) % 10 == 0:
-                #    print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch + 1}/{len(train_loader)}], Loss: {loss.item():.4f}')
-
-            mean_train_loss = train_loss / len(train_loader)
-            train_losses.append(mean_train_loss)
-
-            #----- Validation ----------
-            model.eval()
-            val_loss = 0
-            with torch.no_grad():
-                for X_val, y_val in val_loader:
-                    X_val = X_val.to(device)
-                    y_val = y_val.to(device).float()
-
-                    val_output = model(X_val)
-                    val_loss += criterion(val_output, y_val).item()
-
-            mean_val_loss = val_loss / len(val_loader)
-            val_losses.append(mean_val_loss)
-
-            print(f"Trial {trial.number} - Epoch {epoch+1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
-
-            ## prevent overfitting
-            if mean_val_loss < best_val_loss:
-                best_val_loss = mean_val_loss
-                patience_counter = 0  # Reset counter when improvement happens
-            else:
-                patience_counter += 1
-                #print(f"No improvement in val loss for {patience_counter} epochs.")
-                if patience_counter >= patience:
-                    print(f"Early stopping triggered val didn't improve for {patience} epochs")
-                    break  # Stops training
-
-            # ----- prune underperforming models -----
-            trial.report(mean_val_loss, epoch)
-            if trial.should_prune():
-                print(f"Trial {trial.number} pruned at epoch {epoch + 1}.")
-                raise TrialPruned()
-
-        print(f"Trial {trial.number} finished. Final Validation Loss: {mean_val_loss:.6f}")
         return mean_val_loss
     return objective
 
 def make_test(model, data):
-    def test_best_objective(best_trial, data=data):
+    def test_best_objective(best_trial, model=model, data=data):
         # ---- create best model based on best hyperparams --------
         best_params = best_trial.params
         window_size = best_params["window_size"]
@@ -307,6 +338,7 @@ def make_test(model, data):
                               num_layers=best_params["num_layers"],
                               kernel_size=best_params["kernel_size"],
                               lstm_hidden_size=best_params["lstm_hidden_size"],
+                              dropout=best_params["dropout"],
                               window_size = window_size )
 
         best_model.to(device)
@@ -326,58 +358,17 @@ def make_test(model, data):
         criterion = nn.MSELoss()
         criterion.to(device)
 
-        #-----  train best model  -----------
-        train_losses = []
-        val_losses = []
-        num_epochs = 400
-        best_val_loss = float("inf")
-        patience = 15
-        patience_counter = 0
-
-        for epoch in range(num_epochs):
-            best_model.train()
-            train_loss = 0
-            for batch, (X, y) in enumerate(train_loader):
-                X = X.to(device)
-                y = y.to(device).float()
-
-                optimizer.zero_grad()
-                output = best_model(X)  # forward pass
-
-                loss = criterion(output, y)  # calc loss, gradient and update param
-                loss.backward()
-                optimizer.step()
-
-                train_loss += loss.item()
-
-            mean_train_loss = train_loss / len(train_loader)
-            train_losses.append(mean_train_loss)
-
-            # ----- Validation ----------
-            best_model.eval()
-            val_loss = 0
-            with torch.no_grad():
-                for X_val, y_val in val_loader:
-                    X_val = X_val.to(device)
-                    y_val = y_val.to(device).float()
-
-                    val_output = best_model(X_val)
-                    val_loss += criterion(val_output, y_val).item()
-
-            mean_val_loss = val_loss / len(val_loader)
-            val_losses.append(mean_val_loss)
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {mean_train_loss:.4f}, Val Loss: {mean_val_loss:.4f}")
-
-
-            ## prevent overfitting
-            if mean_val_loss < best_val_loss:
-                best_val_loss = mean_val_loss
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"Early stopping triggered val didn't improve for {patience} epochs")
-                    break  # Stops training
+        #-----  train and val model on best hyperparam -----------
+        best_val_loss, train_losses, val_losses, m = train_validate_model(
+            model=best_model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            trial = None,
+            epochs=400,
+            patience=15,
+        )
 
         # ---- evaluate best model ---------
         best_model.eval()
@@ -427,12 +418,11 @@ def make_test(model, data):
 
 if __name__ == "__main__":
     # --- Run the Optimization ---
-    study_name = "cnn-lstm-check-8"
+    study_name = ("cnn-lstm-check-22")
     storage = RDBStorage(
         url=f"sqlite:///{study_name}.db",
         engine_kwargs={"connect_args": {"check_same_thread": False}}
     )
-
 
     study = optuna.create_study(
         study_name = study_name,
@@ -447,14 +437,13 @@ if __name__ == "__main__":
     #data = DataCollection.GetData()
 
 
-    model = models[1]
+    model = models[0]
     data = datasets[0]
 
-    study.optimize(make_objective(model,data),  n_trials=100)
+    study.optimize(make_objective(model,data),  n_trials=5)
 
     print("Best trial:")
-
-    print(f"Value (Validation Loss): {study.best_trial.value}")
+    print(f"Value (Val Loss): {study.best_trial.value}")
     print(f"best params: {study.best_params}")
 
     print("----------- training a model using best hyperparameters -----------")
