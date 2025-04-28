@@ -9,18 +9,25 @@ import matplotlib.pyplot as plt
 import torch.utils.data
 
 
-def evaluate(predicted_tensor, targets_tensor,preds_inverse, targets_inverse, train_losses, val_losses ):
+def evaluate_metrics(predicted_tensor, targets_tensor,preds_inverse, targets_inverse ):
     #METRICS
-    evaluation_metrics(predicted_tensor, targets_tensor)
+    model_metrics(predicted_tensor, targets_tensor)
     financial_metrics(preds_inverse,targets_inverse )
 
+
+
+def evaluate_graph(predicted_tensor, targets_tensor,preds_inverse, targets_inverse, train_losses, val_losses ):
     ##PLOTS
     train_val_plot(train_losses, val_losses)
     target_predicted_plot(targets_inverse,preds_inverse)
     cumulative_returns_plot(targets_inverse, preds_inverse)
-    residual_plots(targets_inverse, preds_inverse)
 
-def evaluation_metrics(predicted_tensor, targets_tensor):
+def evaluate_graph_mean(preds_inverse, targets_inverse):
+    ##PLOTS
+    target_predicted_plot(targets_inverse,preds_inverse)
+    cumulative_returns_plot(targets_inverse, preds_inverse)
+
+def model_metrics(predicted_tensor, targets_tensor):
     # ======= Evaluation METRICS =========
     metrics = {
         "MAE": MeanAbsoluteError(),
@@ -37,6 +44,11 @@ def evaluation_metrics(predicted_tensor, targets_tensor):
         print(f"{name}: {metric.compute().item():.4f}")
 
 def financial_metrics(preds_inverse, targets_inverse):
+    #final_return
+    daily_returns = (targets_inverse[1:] - preds_inverse[:-1]) / preds_inverse[:-1]
+    final_return = np.prod(1 + daily_returns) - 1
+    print('final return', final_return)
+
     # Directional accuracy
     direction_true = np.sign(targets_inverse[1:] - targets_inverse[:-1])  # Actual direction (up/down)
     direction_pred = np.sign(preds_inverse[1:] - preds_inverse[:-1])  # Predicted direction (up/down)
@@ -74,26 +86,23 @@ def target_predicted_plot(targets_inverse,preds_inverse):
     plt.show()
 
 def cumulative_returns_plot(targets_inverse, preds_inverse):
-    returns = (targets_inverse[1:] - targets_inverse[:-1]) * np.sign(preds_inverse[1:] - preds_inverse[:-1])
-    cumulative_returns = np.cumsum(returns)
+    # 4) Strategy returns based on directional predictions
+    strat_daily = (targets_inverse[1:] - targets_inverse[:-1]) * np.sign(preds_inverse[1:] - preds_inverse[:-1])
+    strat_cum = np.cumsum(strat_daily)
+
+   # Buy & Hold returns
+    bh_daily = targets_inverse[1:] - targets_inverse[:-1]
+    bh_cum = np.cumsum(bh_daily)
+
+
     plt.figure(figsize=(12, 6))
-    plt.plot(cumulative_returns, label='Strategy Returns', color='green')
-    plt.title("Cumulative Returns from Directional Predictions")
-    plt.xlabel("Time")
+    plt.plot(strat_cum, label='Model Returns', color='green')
+    plt.plot(bh_cum, label='Buy & Hold Returns', color='blue', linestyle='--')
+    plt.title("Cumulative Returns: Model Strategy vs. Buy & Hold")
+    plt.xlabel("Time Steps")
     plt.ylabel("Cumulative Profit/Loss")
     plt.axhline(0, color='black', linestyle='--')
     plt.legend()
-    plt.grid()
+    plt.grid(True)
     plt.show()
 
-def residual_plots(targets_inverse,preds_inverse):
-    # 4 Residuals plot (prediction errors)
-    residuals = targets_inverse - preds_inverse
-    plt.figure(figsize=(12, 6))
-    plt.scatter(range(len(residuals)), residuals, alpha=0.5, color='purple')
-    plt.axhline(0, color='red', linestyle='--')
-    plt.title("Prediction Residuals (Actual - Predicted)")
-    plt.xlabel("Time")
-    plt.ylabel("Residual Error")
-    plt.grid()
-    plt.show()

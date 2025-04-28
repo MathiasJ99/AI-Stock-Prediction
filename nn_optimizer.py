@@ -1,36 +1,39 @@
+import copy
+
+import numpy as np
 import optuna
+import pandas as pd
 import torch
 import torch.nn as nn
-import pandas as pd
-import torch.utils.data
 import torch.optim as optim
+import torch.utils.data
 from optuna.exceptions import TrialPruned
+from optuna.storages import RDBStorage
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset, Subset, DataLoader
-from optuna.storages import RDBStorage
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-import yfinance as yf
-from DataCollection import GetData
-from  Evaluation import evaluate
-import torch.nn.init as init
-import time
-import numpy as np
-import yfinance as yf
-import pandas as pd
-from dotenv import load_dotenv
-import os
-from fredapi import Fred
-from functools import reduce
 
-from torchmetrics import MeanAbsoluteError, MeanSquaredError, MeanAbsolutePercentageError, R2Score
+import Evaluation
 
 torch.manual_seed(99)
+TPE_SEED = 99
 # ------ GPU settings -----
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 available = torch.cuda.is_available()
 count = torch.cuda.device_count()
 print(f"Using {device} device, available {available}, count {count}")
+
+##
+NUM_TRIALS = 3 #250
+EPOCHS_PER_TRIAL = 20
+EPOCHS_BEST_TRIAL = 200 #1000
+TRIALS_BEFORE_PRUNING = 2 #50
+EPOCHS_BEFORE_PRUNING = 2  # 25
+PATIENCE_TRAINING = 10
+PATIENCE_TESTING = 25
+
+TRAINING_SEEDS = [0,1,2]
+TEST_SEEDS = [22,44,99]
+
 
 class AllData(Dataset):
     def __init__(self, sequence_length=20, data=pd.read_excel("MergedDF_googl.xlsx")):
@@ -142,7 +145,27 @@ class CNN_LSTM(nn.Module):
         out = self.fc(out[:, -1, :])
         return out
 
-def train_validate_model(model,train_loader, val_loader, optimizer, criterion, trial, epochs, patience):
+class Baseline_MLP(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size=1):
+        super(Baseline_MLP, self).__init__()
+
+        layers = []
+        layers.append(nn.Linear(input_size, hidden_size))
+        layers.append(nn.ReLU())
+
+        for i in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.ReLU())
+
+        layers.append(nn.Linear(hidden_size, output_size))
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        return self.model(x)
+
+def train_validate_model(model,train_loader, val_loader, optimizer, criterion, trial, epochs, patience, seed):
     # -------- training -------
     train_losses = []
     val_losses = []
@@ -150,6 +173,7 @@ def train_validate_model(model,train_loader, val_loader, optimizer, criterion, t
     best_val_loss = float("inf")
     patience = patience
     patience_counter = 0
+    torch.manual_seed(seed)
 
     for epoch in range(num_epochs):
         model.train()
@@ -185,20 +209,19 @@ def train_validate_model(model,train_loader, val_loader, optimizer, criterion, t
         val_losses.append(mean_val_loss)
 
         if trial is not None:
-            print(f"Trial {trial.number} - Epoch {epoch + 1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
+            print(f"trial {trial.number} - epoch {epoch + 1}/{num_epochs} -> train Loss: {mean_train_loss:.6f}, val Loss: {mean_val_loss:.6f}")
         else:
-            print(f"Epoch {epoch + 1}/{num_epochs} -> Train Loss: {mean_train_loss:.6f}, Val Loss: {mean_val_loss:.6f}")
+            print(f"epoch {epoch + 1}/{num_epochs} -> train Loss: {mean_train_loss:.6f}, val Loss: {mean_val_loss:.6f}")
 
 
         ## prevent overfitting
         if mean_val_loss < best_val_loss:
             best_val_loss = mean_val_loss
-            patience_counter = 0  # Reset counter when improvement happens
+            patience_counter = 0  # Reset counter when model improves
         else:
             patience_counter += 1
-            # print(f"No improvement in val loss for {patience_counter} epochs.")
             if patience_counter >= patience:
-                print(f"Early stopping triggered val didn't improve for {patience} epochs")
+                print(f"early stopping triggered val didn't improve for {patience} epochs")
                 break  # Stops training
 
         # ----- prune underperforming models -----
@@ -209,14 +232,11 @@ def train_validate_model(model,train_loader, val_loader, optimizer, criterion, t
                 raise TrialPruned()
 
     if trial is not None:
-        print(f"Trial {trial.number} finished. Final Validation Loss: {mean_val_loss:.6f}")
+        print(f"Trial {trial.number} finished Final Validation Loss: {mean_val_loss:.6f}")
     else:
         print(f"Final Validation Loss: {mean_val_loss:.6f}")
 
     return mean_val_loss, train_losses, val_losses, model
-
-def test_model():
-    pass
 
 ## optimize hyperparameters
 def make_objective(model, data):
@@ -225,7 +245,8 @@ def make_objective(model, data):
         # ------- hyperparameters part 1 (common for all models) -------
         window_size = trial.suggest_int("window_size", 5, 25)
         batch_size = trial.suggest_categorical("batch_size", [32, 64])
-        dropout = trial.suggest_float("dropout", 0.1, 0.9)
+        if model != "Baseline":
+            dropout = trial.suggest_float("dropout", 0.1, 0.9)
 
         # ------ dataset stuff -------
         # Creating datasets
@@ -265,9 +286,17 @@ def make_objective(model, data):
             lstm_hidden_size = trial.suggest_int("lstm_hidden_size", 64, 1024)
             optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "RMSprop", "SGD"])
             num_filters = trial.suggest_int("num_filters", 1, 256)
-            kernel_size = trial.suggest_int("kernel_size", 1, 1)
+            kernel_size = trial.suggest_int("kernel_size", 1, 5)
 
             model = CNN_LSTM(input_size=input_size, window_size=window_size,num_filters=num_filters, kernel_size=kernel_size, lstm_hidden_size=lstm_hidden_size, num_layers=num_layers,dropout=dropout, output_size=output_size)
+
+        elif model == "Baseline":
+            learning_rate = trial.suggest_float("learning_rate", 0.0001, 0.01, log=True)
+            num_layers = trial.suggest_int("num_layers", 1, 5)
+            hidden_size = trial.suggest_int("hidden_size", 32, 1024)
+            optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "AdamW", "RMSprop", "SGD"])
+
+            model = Baseline_MLP(input_size=input_size*window_size, hidden_size=hidden_size, output_size=1, num_layers= num_layers)
 
         model.to(device)
 
@@ -285,18 +314,26 @@ def make_objective(model, data):
 
 
         #-------- training & val -------
-        mean_val_loss, train_losses, val_losses, best_model= train_validate_model(
-            model= model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            optimizer=optimizer,
-            criterion= criterion,
-            trial = trial,
-            epochs = 15,
-            patience = 10
-        )
+        seed_val_loss = []
+        for seed in TRAINING_SEEDS:
+            model_copy = copy.deepcopy(model)
+            mean_val_loss, train_losses, val_losses, best_model= train_validate_model(
+                model= model_copy,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                optimizer=optimizer,
+                criterion= criterion,
+                trial = trial,
+                epochs = EPOCHS_PER_TRIAL,
+                patience = PATIENCE_TRAINING,
+                seed = seed,
+            )
+            seed_val_loss.append(mean_val_loss)
 
-        return mean_val_loss
+        mean_seed_val_loss = sum(seed_val_loss) / len(seed_val_loss)
+
+        #return mean_val_loss
+        return mean_seed_val_loss
     return objective
 
 def make_test(model, data):
@@ -340,10 +377,14 @@ def make_test(model, data):
                               lstm_hidden_size=best_params["lstm_hidden_size"],
                               dropout=best_params["dropout"],
                               window_size = window_size )
+        elif model == "Baseline":
+            best_model =Baseline_MLP(input_size=input_size*window_size,
+                                     hidden_size=best_params["hidden_size"],
+                                     output_size=1,
+                                     num_layers=best_params["num_layers"],
+                                     )
 
         best_model.to(device)
-
-
 
 
         if best_params["optimizer"] == "AdamW":
@@ -359,66 +400,104 @@ def make_test(model, data):
         criterion.to(device)
 
         #-----  train and val model on best hyperparam -----------
-        best_val_loss, train_losses, val_losses, m = train_validate_model(
-            model=best_model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            optimizer=optimizer,
-            criterion=criterion,
-            trial = None,
-            epochs=400,
-            patience=15,
-        )
+        all_preds_tensors = []
+        all_targets_tensors = []
 
-        # ---- evaluate best model ---------
-        best_model.eval()
-        test_loss = 0.0
-        all_preds = []  # predicted
-        all_targets = []  # actual
-        criterion = nn.MSELoss()
-        criterion.to(device)
+        for seed in TEST_SEEDS:
+            best_model_copy = copy.deepcopy(best_model)
+            best_val_loss, train_losses, val_losses, m = train_validate_model(
+
+                model=best_model_copy,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                optimizer=optimizer,
+                criterion=criterion,
+                trial = None,
+                epochs=EPOCHS_BEST_TRIAL,
+                patience=PATIENCE_TESTING,
+                seed = seed,
+            )
+
+            # ---- evaluate best model ---------
+            best_model.eval()
+            test_loss = 0.0
+            all_preds = []  # predicted
+            all_targets = []  # actual
+            criterion = nn.MSELoss()
+            criterion.to(device)
+
+            with torch.no_grad():
+                for X_test, y_test in test_loader:
+                    X_test = X_test.to(device)
+                    y_test = y_test.to(device).float()
+
+                    test_output = best_model(X_test)
+                    test_loss += criterion(test_output, y_test).item()
+
+                    # store predictions and targets
+                    all_preds.extend(test_output.cpu().numpy())
+                    all_targets.extend(y_test.cpu().numpy())
+
+            avg_test_loss = test_loss / len(test_loader)
+
+            print(f"seed: {seed}")
+            print(f"Final Test Loss: {avg_test_loss:.4f}")
+
+            # reshape and inverse transform predictions and targets
+            all_preds = np.array(all_preds).reshape(-1, 1)  # Ensure 2D shape for scaler
+            all_targets = np.array(all_targets).reshape(-1, 1)
+
+            preds_inverse = scaler_target.inverse_transform(all_preds)
+            targets_inverse = scaler_target.inverse_transform(all_targets)
+
+            # flatten  to 1D for plotting
+            preds_inverse = preds_inverse.flatten()
+            targets_inverse = targets_inverse.flatten()
+
+            # turn into tensors
+            preds_tensor = torch.from_numpy(preds_inverse).float()
+            targets_tensor = torch.from_numpy(targets_inverse).float()
+
+            #save for cal average
+            all_preds_tensors.append(preds_tensor)
+            all_targets_tensors.append(targets_tensor)
 
 
-        with torch.no_grad():
-            for X_test, y_test in test_loader:
-                X_test = X_test.to(device)
-                y_test = y_test.to(device).float()
 
-                test_output = best_model(X_test)
-                test_loss += criterion(test_output, y_test).item()
+            model_name = "seed"+ str(seed) +"_"+ model + "_google_.pth"
+            torch.save(best_model, model_name)
 
-                # store predictions and targets
-                all_preds.extend(test_output.cpu().numpy())
-                all_targets.extend(y_test.cpu().numpy())
+            ##displays evaluation metrics for each seed
+            Evaluation.evaluate_metrics(preds_tensor, targets_tensor, preds_inverse, targets_inverse)
 
-        avg_test_loss = test_loss / len(test_loader)
-        print(f"\nFinal Test Loss: {avg_test_loss:.4f}")
+            print("--------------")
+        # ----- calc mean of tensors and display mean graphs ------
+        all_preds_tensors = torch.stack(all_preds_tensors)
+        all_targets_tensors = torch.stack(all_targets_tensors)
 
-        # reshape and inverse transform predictions and targets
-        all_preds = np.array(all_preds).reshape(-1, 1)  # Ensure 2D shape for scaler
-        all_targets = np.array(all_targets).reshape(-1, 1)
+        mean_preds = all_preds_tensors.mean(dim = 0)
+        mean_targets = all_targets_tensors.mean(dim=0)
 
-        preds_inverse = scaler_target.inverse_transform(all_preds)
-        targets_inverse = scaler_target.inverse_transform(all_targets)
+        # Convert to numpy and reshape for scaler
+        mean_preds_np = mean_preds.numpy().reshape(-1, 1)
+        mean_targets_np = mean_targets.numpy().reshape(-1, 1)
 
-        # flatten  to 1D for plotting
-        preds_inverse = preds_inverse.flatten()
-        targets_inverse = targets_inverse.flatten()
+        #flatten for 1d plotting
+        mean_preds_inverse = scaler_target.inverse_transform(mean_preds_np).flatten()
+        mean_targets_inverse = scaler_target.inverse_transform(mean_targets_np).flatten()
 
-        # turn into tensors
-        preds_tensor = torch.from_numpy(preds_inverse).float()
-        targets_tensor = torch.from_numpy(targets_inverse).float()
+        # displays evalutaion graphs for average of all seeds
+        print("---------- Models Average Metrics ----------------")
+        Evaluation.evaluate_metrics(mean_preds,mean_targets,mean_preds_inverse, mean_targets_inverse)
+        Evaluation.evaluate_graph_mean(mean_preds_inverse,mean_targets_inverse)
 
-        ##EVALUATE
-        evaluate(preds_tensor, targets_tensor, preds_inverse, targets_inverse, train_losses, val_losses)
 
-        model_name = "best_" + model +".pth"
-        torch.save(best_model, model_name)
+
     return test_best_objective
 
 if __name__ == "__main__":
     # --- Run the Optimization ---
-    study_name = ("cnn-lstm-check-22")
+    study_name = ("baseline-google-test-7")
     storage = RDBStorage(
         url=f"sqlite:///{study_name}.db",
         engine_kwargs={"connect_args": {"check_same_thread": False}}
@@ -429,18 +508,19 @@ if __name__ == "__main__":
         storage = storage,
         #load_if_exists = True,
         direction="minimize",
-        sampler=optuna.samplers.TPESampler(seed=99),
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5))
+        sampler=optuna.samplers.TPESampler(seed=TPE_SEED),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=TRIALS_BEFORE_PRUNING, n_warmup_steps=EPOCHS_BEFORE_PRUNING))
+        #pruner=optuna.pruners.HyperbandPruner(min_resource=TRIALS_BEFORE_PRUNING, max_resource=100, reduction_factor=3))
 
-    models = ["LSTM", "CNN_LSTM"]
+    models = ["LSTM", "CNN_LSTM","Baseline"]
     datasets = [pd.read_excel("MergedDF_googl.xlsx"),pd.read_excel("MergedDF_gold.xlsx")]
     #data = DataCollection.GetData()
 
 
-    model = models[0]
+    model = models[2]
     data = datasets[0]
 
-    study.optimize(make_objective(model,data),  n_trials=5)
+    study.optimize(make_objective(model,data),  n_trials=NUM_TRIALS)
 
     print("Best trial:")
     print(f"Value (Val Loss): {study.best_trial.value}")
