@@ -1,12 +1,12 @@
-from bs4 import BeautifulSoup
-import requests
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
+import pandas as pd
+import requests
 import torch
-import torch.nn as nn
+from bs4 import BeautifulSoup
+from nltk.sentiment import SentimentIntensityAnalyzer
 from transformers import RobertaTokenizer, RobertaForSequenceClassification
+
 
 def scrape_page(page, ticker, base_url):
     #Scrapes news articles for a given stock ticker and page number
@@ -88,20 +88,20 @@ def give_scores_bert(df):
     tokenizer = RobertaTokenizer.from_pretrained("mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
     model = RobertaForSequenceClassification.from_pretrained("mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis")
 
-    # turn model into eval mode
+
     model.eval()
-    def get_sentiment_score(text):
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    def get_sentiment_score(title):
+        inputs = tokenizer(title, return_tensors="pt", truncation=True, padding=True)
         with torch.no_grad():
             outputs = model(**inputs)
 
-        # Convert logits to probabilities
+        #convert to prob
         probs = torch.nn.functional.softmax(outputs.logits, dim=1).squeeze().tolist()
-        # Assign a sentiment score (-1 for negative, 0 for neutral, 1 for positive)
+        #assign sentiment score (-1 for negative, 0 for neutral, 1 for positive)
         sentiment_score = (-1 * probs[0]) + (0 * probs[1]) + (1 * probs[2])
         return sentiment_score
 
-    # Apply function to each "Title_" column
+    # Apply func to each "Title_" column
     for col in df.columns:
         if col.startswith("Title_"):
             df[col] = df[col].astype(str).apply(get_sentiment_score)
@@ -148,6 +148,7 @@ def GetSentimental(file_name, ticker):
 
         #score data (REMOVE 1)  and clean data
         #df=give_scores_nltk(df)
+        print("scoring news data")
         df=give_scores_bert(df)
         df=cleandf(df)
 

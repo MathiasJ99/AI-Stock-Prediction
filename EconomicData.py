@@ -12,31 +12,30 @@ end = os.getenv("END")
 
 def GetEconomic(file_path):
     if file_path == "EconomicData.xlsx":
-        EconomicalDF = pd.read_excel(file_path)
-
+        EconomicalDF = pd.read_excel(file_path) ## if already called
         return EconomicalDF
     else:
         ##tags / features
-        Daily_Economic_obj = ["DFF","DFII5","DFII10","T5YIE","T10YIE","VIXCLS","DTWEXBGS","DCOILWTICO","USEPUINDXD"]
-        Monthly_Economic_obj = ["UNRATE","CPIAUCSL","A229RX0","INDPRO","M2SL","PCEPI","UMCSENT","BOPGSTB"]
-        Quarterly_Economic_obj = ["GDP", "A939RX0Q048SBEA","GNP","PSAVE","FGEXPND","CP"]
+        Daily_Economic_Tags = ["DFF","DFII5","DFII10","T5YIE","T10YIE","VIXCLS","DTWEXBGS","DCOILWTICO","USEPUINDXD"]
+        Monthly_Economic_Tags = ["UNRATE","CPIAUCSL","A229RX0","INDPRO","M2SL","PCEPI","UMCSENT","BOPGSTB"]
+        Quarterly_Economic_Tags = ["GDP", "A939RX0Q048SBEA","GNP","PSAVE","FGEXPND","CP"]
 
         # Call API function
-        Daily_data_dfs = APICall(Daily_Economic_obj)
-        Monthly_data_dfs = APICall(Monthly_Economic_obj)
-        Quarterly_Data_dfs = APICall(Quarterly_Economic_obj)
+        Daily_data_dfs = APICall(Daily_Economic_Tags)
+        Monthly_data_dfs = APICall(Monthly_Economic_Tags)
+        Quarterly_Data_dfs = APICall(Quarterly_Economic_Tags)
 
-        #Merge data of same frequency together on date
+        #Merge data of same freq together on Dates
         DailyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Daily_data_dfs)
         MonthlyDF =reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Monthly_data_dfs)
         QuarterlyDF = reduce(lambda left, right: pd.merge(left, right, on="Dates", how="inner"), Quarterly_Data_dfs)
 
-        #Add month column  to Daily and Monthly df, then merging them
+        #Add month col to Daily and Monthly df, then merge them
         DailyDF["Month"] = DailyDF["Dates"].dt.to_period("M")
         MonthlyDF["Month"] = MonthlyDF["Dates"].dt.to_period("M")
         Day_MonthDF = pd.merge(DailyDF,MonthlyDF, on="Month", how="left")
 
-        #formating df
+        #formating df removing unnecessayr cols
         Day_MonthDF = Day_MonthDF.drop(columns=["Month"])
         Day_MonthDF = Day_MonthDF.rename(columns = {"Dates_x": "Dates"})
         Day_MonthDF = Day_MonthDF.drop(columns=["Dates_y"])
@@ -65,12 +64,12 @@ def GetEconomic(file_path):
 def APICall(Tags):#input: an array of tags, output: array of dfs in form [date, feature]
     #FRED API limits
     ## 120 Requests / minute
-    ## 1000 records / request & maybe 100,000 observations / request
+    ## 1000 records / request & 100,000 observations / request
 
     fred = Fred(api_key=os.getenv("FRED_API_KEY"))
     data = []
 
-    # iterate though tags provided call api and get [Dates, data] and add that to data df
+    # iterate though tags provided call, api and get [Dates, data] and add that to data df
     for tag in Tags:
         result = fred.get_series(series_id=tag,observation_start=start, observation_end=end)
         result_df = pd.DataFrame(result)

@@ -1,12 +1,8 @@
-import time
-import numpy as np
-import yfinance as yf
-import pandas as pd
-from dotenv import load_dotenv
 import os
-from functools import reduce
-
-
+import numpy as np
+import pandas as pd
+import yfinance as yf
+from dotenv import load_dotenv
 
 load_dotenv() #load env vars
 start = os.getenv("START")
@@ -24,7 +20,7 @@ def GetHistoric(file_name, ticker):
         HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
 
         print(HistoricalDF_and_TechnicalDF.head())
-        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)  # uses $USD
+        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)
         return HistoricalDF_and_TechnicalDF
 
     elif file_name == historic_technical_path:
@@ -37,19 +33,18 @@ def GetHistoric(file_name, ticker):
         # Creates new column in df called medium
         HistoricalDF['Medium'] = (HistoricalDF['High'] + HistoricalDF['Low']) / 2
 
-        # formatting
-        ##converting multi-dimensional header to 1d header
+        # formatting - converting multi-dimensional header to 1d header
         one_dim_headers = [col[0] for col in HistoricalDF.columns.values]
-        HistoricalDF.columns = one_dim_headers  # update the DataFrame headers
+        HistoricalDF.columns = one_dim_headers
         HistoricalDF = HistoricalDF.reset_index()
         HistoricalDF.to_excel(historic_path)
 
         HistoricalDF_and_TechnicalDF = GetTechnicalIndicators(HistoricalDF)
         print(HistoricalDF_and_TechnicalDF.head())
-        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)  # uses $USD
+        HistoricalDF_and_TechnicalDF.to_excel(historic_technical_path)
         return HistoricalDF_and_TechnicalDF
 
-def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
+def GetTechnicalIndicators(df):
     ###Trend indicators
     #EMA-12
     df["12_day_EMA"] = df['Close'].ewm(span=12, adjust=False).mean()
@@ -75,18 +70,17 @@ def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
     df['+DM_smooth'] = df['+DM'].rolling(window=period, min_periods=1).mean()
     df['-DM_smooth'] = df['-DM'].rolling(window=period, min_periods=1).mean()
 
-    # Calculate +DI and -DI
+    # Calc +DI, -DI & DX
     df['+DI'] = (df['+DM_smooth'] / df['TR_smooth']) * 100
     df['-DI'] = (df['-DM_smooth'] / df['TR_smooth']) * 100
 
-    # Compute DX
     df['DX'] = (abs(df['+DI'] - df['-DI']) / (abs(df['+DI'] + df['-DI']))) * 100
 
-    # Initialize ADX with SMA for the first 14 periods
+    # Init ADX with SMA for the first 14 periods
     df['ADX'] = np.nan
     df.loc[period - 1, 'ADX'] = df['DX'][:period].mean()
 
-    # Apply Wilder's Smoothing for ADX
+    # Apply Wilders Smoothing for ADX
     for i in range(period, len(df)):
         df.loc[i, 'ADX'] = (df.loc[i - 1, 'ADX'] * (period - 1) + df.loc[i, 'DX']) / period
 
@@ -121,15 +115,15 @@ def GetTechnicalIndicators(df): ## need to calculate MACD and VIX
     df['avg_loss'] = df['loss'].rolling(window=period, min_periods=1).mean()
 
     #Calculate RS & RSI
-    df['rs'] = df['avg_gain'] / df['avg_loss']
-    df['rsi'] = 100 - (100 / (1 + df['rs']))
+    df['RS'] = df['avg_gain'] / df['avg_loss']
+    df['RSI'] = 100 - (100 / (1 + df['RS']))
 
     #Drop intermediate columns
-    df.drop(['delta', 'gain', 'loss', 'avg_gain', 'avg_loss', 'rs'], axis=1, inplace=True)
+    df.drop(['delta', 'gain', 'loss', 'avg_gain', 'avg_loss', 'RS'], axis=1, inplace=True)
 
     #drop first 13 values
-    df.loc[:13,"rsi"] =np.nan
-    df["rsi"] = df['rsi'].fillna(df['rsi'].mean())
+    df.loc[:13,"RSI"] =np.nan
+    df["RSI"] = df['RSI'].fillna(df['RSI'].mean())
 
     #MACD
     df['MACD'] = df['12_day_EMA'] - df['26_day_EMA']
